@@ -1,0 +1,243 @@
+------MAIN.PY------
+import configparser
+import reddit_api
+import openai_api
+import logging
+
+# Setup logging
+logging.basicConfig(filename='bot.log', level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Load configuration from config.ini
+config = configparser.ConfigParser()
+config.read('config.ini')
+
+# Setup OpenAI API
+openai_api_key = config['openai']['api_key']
+openai_api.setup_openai_api(openai_api_key)
+
+# Setup Reddit API
+reddit = reddit_api.setup_reddit_api(config)
+
+# Check if Reddit API is setup successfully
+if reddit is None:
+    logging.error("Failed to setup Reddit API.")
+    exit()
+
+# Main logic of the bot
+while True:
+    # Display options to the user
+    print("Select an option:")
+    print("1: Make a new post")
+    print("2: Reply to unread notifications")
+    print("3: Comment on the 5 newest posts in the subreddit")
+    print("4: Exit")
+    
+    # Get user input
+    user_input = input("Enter option number: ").strip()
+    
+    # Handle user input
+    if user_input == "1":
+        # Make a new post
+        logging.info("Option 1 selected: Making a new post.")
+        subreddit_name = "subsimgpt2interactive"  # specify the subreddit name
+        reddit_api.make_new_post(reddit, subreddit_name)
+    
+    elif user_input == "2":
+        # Reply to unread notifications
+        logging.info("Option 2 selected: Replying to unread notifications.")
+        response = "Hello, this is ZakkBot replying to your message!"
+        previous_interactions = {}
+        reddit_api.reply_to_unread_notifications(reddit, response, previous_interactions)
+    
+    elif user_input == "3":
+        # Comment on the 5 newest posts in the subreddit
+        logging.info("Option 3 selected: Commenting on the 5 newest posts.")
+        subreddit_name = "subsimgpt2interactive"  # specify the subreddit name
+        response = "Hello, this is ZakkBot commenting on your post!"
+        reddit_api.comment_on_new_posts(reddit, subreddit_name, response)
+    
+    elif user_input == "4":
+        # Exit the program
+        logging.info("Option 4 selected: Exiting the program.")
+        break
+    
+    else:
+        logging.warning("Invalid option selected.")
+        print("Invalid option. Please enter a number between 1 and 4.")
+
+__________
+
+------openai_api.py------
+import openai
+import logging
+
+def setup_openai_api(api_key):
+    """
+    Setup the OpenAI API with the provided API key.
+    """
+    try:
+        openai.api_key = api_key
+        return True
+    except Exception as e:
+        logging.error(f"Error setting up OpenAI API: {e}")
+        return False
+
+def generate_response(prompt, engine='davinci', temperature=0.7, max_tokens=50):
+    """
+    Generate a response using OpenAI GPT-3.
+    
+    :param prompt: The prompt to send to GPT-3.
+    :param engine: The GPT-3 engine to use (e.g., 'davinci').
+    :param temperature: Controls the randomness of the output (0 to 1).
+    :param max_tokens: The maximum number of tokens in the output.
+    :return: The generated response as a string.
+    """
+    try:
+        response = openai.Completion.create(
+            engine=engine,
+            prompt=prompt,
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+        return response.choices[0].text.strip()
+    except Exception as e:
+        logging.error(f"Error generating response from OpenAI API: {e}")
+        return None
+
+__________
+#reddit handling 
+------reddit_api.py------
+import praw
+import logging
+import os
+import random
+import re
+
+def setup_reddit_api(config):
+    try:
+        reddit = praw.Reddit(
+            client_id=config['reddit']['client_id'],
+            client_secret=config['reddit']['client_secret'],
+            username=config['reddit']['username'],
+            password=config['reddit']['password'],
+            user_agent="zakkbot"
+        )
+        return reddit
+    except Exception as e:
+        logging.error(f"Error setting up Reddit API: {e}")
+        return None
+
+def is_incomplete_sentence(sentence):
+    # Check if the sentence ends with a punctuation mark
+    if re.match(r'.*[.!?]\s*$', sentence):
+        return False
+    return True
+
+def simulate_errors(response):
+    # Introduce small typos or grammatical errors
+    if random.random() < 0.05:
+        index = random.randint(0, len(response) - 1)
+        response = response[:index] + response[index + 1:]
+    return response
+
+def make_new_post(reddit, subreddit_name):
+    subreddit = reddit.subreddit(subreddit_name)
+    post_types = ['image', 'link', 'text']
+    post_type = random.choice(post_types)
+    
+    try:
+        if post_type == 'image':
+            # Post an image from the "zakkbot pics" folder
+            image_folder = "zakkbot pics"
+            image_files = [f for f in os.listdir(image_folder) if os.path.isfile(os.path.join(image_folder, f))]
+            if image_files:
+                image_file = random.choice(image_files)
+                title = os.path.splitext(image_file)[0]
+                subreddit.submit_image(title, os.path.join(image_folder, image_file))
+                # Remove the used image
+                os.remove(os.path.join(image_folder, image_file))
+            else:
+                print("No images found in the 'zakkbot pics' folder.")
+        
+        elif post_type == 'link':
+            # Post a link from the "zakkbot_links.txt" file
+            with open("zakkbot_links.txt", "r") as file:
+                links = file.readlines()
+            if links:
+                link = random.choice(links).strip()
+                # Remove the used link
+                links.remove(link + '\n')
+                with open("zakkbot_links.txt", "w") as file:
+                    file.writelines(links)
+                # Use a default title for link posts (you can customize this)
+                title = "Check out this cool link!"
+                subreddit.submit(title, url=link)
+            else:
+                print("No links found in the 'zakkbot_links.txt' file.")
+        
+        elif post_type == 'text':
+            # Post a text post
+            title = "This is a random text post"
+            content = "Hello, I am ZakkBot and this is a random text post."
+            subreddit.submit(title, selftext=content)
+        
+    except Exception as e:
+        logging.error(f"Error making a new post: {e}")
+
+def reply_to_unread_notifications(reddit, response, previous_interactions):
+    try:
+        for item in reddit.inbox.unread(limit=7):
+            # Check if the message is an incomplete sentence
+            if is_incomplete_sentence(item.body):
+                clarification_response = "It seems like your sentence is incomplete. Could you please clarify?"
+                item.reply(clarification_response)
+                item.mark_read()
+                continue
+            
+            # Context awareness
+            context = previous_interactions.get(item.author.name, "")
+            full_prompt = context + " " + item.body
+            
+            # Generate response
+            response = generate_response(full_prompt, personality_prompt, 0.7, 50)
+            
+            # Error simulation
+            response = simulate_errors(response)
+            
+            # Bot name awareness
+            if "ZakkBot" in item.body:
+                response = "Hi, I'm ZakkBot! " + response
+            
+            # Store interaction for context
+            previous_interactions[item.author.name] = full_prompt + " " + response
+            
+            # Reply
+            item.reply(response)
+            item.mark_read()
+    except Exception as e:
+        logging.error(f"Error replying to unread notifications: {e}")
+
+def comment_on_new_posts(reddit, subreddit_name, response):
+    try:
+        subreddit = reddit.subreddit(subreddit_name)
+        for post in subreddit.new(limit=5):
+            post.reply(response)
+    except Exception as e:
+        logging.error(f"Error commenting on new posts: {e}")
+
+__________
+#Sharable Config File
+------Blank_Config.ini------
+#Reddit 
+[reddit]
+client_id = YOUR_REDDIT_CLIENT_ID
+client_secret = YOUR_REDDIT_CLIENT_SECRET
+username = YOUR_REDDIT_USERNAME
+password = YOUR_REDDIT_PASSWORD
+
+#Open AI Key.
+[openai]
+api_key = YOUR_OPENAI_API_KEY
+__________
+
